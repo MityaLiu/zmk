@@ -7,6 +7,8 @@
 /dts-v1/;
 #include <nordic/nrf52840_qiaa.dtsi>
 #include <common/nordic/nrf52840_uf2_boot_mode.dtsi>
+#include <dt-bindings/led/led.h>
+#include "mikoto-pinctrl.dtsi"
 
 / {
     model = "mikoto";
@@ -16,6 +18,8 @@
         zephyr,code-partition = &code_partition;
         zephyr,sram = &sram0;
         zephyr,flash = &flash0;
+        zmk,backlight = &backlight;
+        zmk,battery = &vbatt;
     };
 
     leds {
@@ -24,10 +28,38 @@
             gpios = <&gpio0 15 GPIO_ACTIVE_HIGH>;
         };
     };
+
+    // Node name must match original "EXT_POWER" label to preserve user settings.
+    EXT_POWER {
+        compatible = "zmk,ext-power-generic";
+        control-gpios = <&gpio0 13 GPIO_ACTIVE_HIGH>;
+        init-delay-ms = <50>;
+    };
+
+    backlight: pwmleds {
+        compatible = "pwm-leds";
+        pwm_led_0 {
+            pwms = <&pwm0 0 PWM_USEC(20) PWM_POLARITY_NORMAL>;
+        };
+    };
+
+    vbatt: vbatt {
+        compatible = "zmk,battery-voltage-divider";
+        io-channels = <&adc 1>;
+        output-ohms = <10000000>;
+        full-ohms = <(10000000 + 4000000)>;
+    };
 };
 
 &reg1 {
     regulator-initial-mode = <NRF5X_REG_MODE_DCDC>;
+};
+
+&pwm0 {
+    status = "okay";
+    pinctrl-0 = <&pwm0_default>;
+    pinctrl-1 = <&pwm0_sleep>;
+    pinctrl-names = "default", "sleep";
 };
 
 &adc {
