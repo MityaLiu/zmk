@@ -1,0 +1,14 @@
+file_format: "1"
+id: tomahawk56
+name: Tomahawk56
+type: shield
+url: https://github.com/MityaLiu/Tomahawk56
+requires: [pro_micro]
+exposes: [i2c_oled]
+features:
+  - keys
+  - display
+  - studio
+siblings:
+  - tomahawk56_left
+  - tomahawk56_right
