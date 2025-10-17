@@ -13,4 +13,5 @@ revisions:
   - "6.1"
   - "6.3"
   - "7.2"
-default_revision: "5.20"
+  - "7.3"
+default_revision: "7.3"
