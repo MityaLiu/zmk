@@ -1,0 +1,14 @@
+file_format: "1"
+id: tomahawk44
+name: Tomahawk44
+type: shield
+url: https://github.com/Tomahawk-Keyboards/tomahawk44
+requires: [pro_micro]
+exposes: [i2c_oled]
+features:
+  - keys
+  - display
+  - studio
+siblings:
+  - tomahawk44_left
+  - tomahawk44_right

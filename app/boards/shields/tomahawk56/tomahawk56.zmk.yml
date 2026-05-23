@@ -2,7 +2,7 @@ file_format: "1"
 id: tomahawk56
 name: Tomahawk56
 type: shield
-url: https://github.com/MityaLiu/Tomahawk56
+url: https://github.com/Tomahawk-Keyboards/tomahawk56
 requires: [pro_micro]
 exposes: [i2c_oled]
 features:
