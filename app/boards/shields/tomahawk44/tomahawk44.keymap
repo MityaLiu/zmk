@@ -19,6 +19,8 @@
 // |  TAB  |  A  |  S   |  D   |  F   |  G   |            |  H   |  J   |  K    |  L   |   ;   |   '   |
 // | SHIFT |  Z  |  X   |  C   |  V   |  B   |            |  N   |  M   |  ,    |  .   |   /   | SHIFT |
 //               | CTRL | CMD  |LOWER |SPACE |            |ENTER |RAISE |  CMD  | OPT  |
+
+            display-name = "Base";
             bindings = <
 &gresc          &kp Q   &kp W             &kp E             &kp R   &kp T                &kp Y   &kp U   &kp I              &kp O           &kp P     &kp BSPC
 &kp TAB         &kp A   &kp S             &kp D             &kp F   &kp G                &kp H   &kp J   &kp K              &kp L           &kp SEMI  &kp SQT
@@ -32,7 +34,7 @@
         lower_layer {
 // ------------------------------------------------------------------------------------------------------------
 // | BTCLR | BT1 | BT2 |  BT3 |  BT4 |  BT5 |            |  UG  |  UG   |  UG   |  UG  |  UG   |  UG   |
-// |  F1   |  F2 |  F3 |  F4  |  F5  |  F6  |            |      |  UG   |  UG   |  UG  |  UG   |  UG   |
+// |  bat  | con |     |      |      |      |            |      |  UG   |  UG   |  UG  |  UG   |  UG   |
 // |   `   |  !  |  @  |  #   |  $   |  %   |            |  ^   |  &    |  *    |  (   |   )   |   ~   |
 //                     |      |      |      |            |      |       |       |
 
@@ -57,7 +59,7 @@
             display-name = "Raise";
             bindings = <
 &trans     &kp F1    &kp F2    &kp F3     &kp F4  &kp F5            &kp F6       &kp F7     &kp F8     &kp F9    &kp F10   &trans
-&kp GRAVE  &kp N1    &kp N2    &kp N3     &kp N4  &kp N5            &kp N6       &kp N7     &kp N8     &kp N9    &kp N10   &trans
+&kp GRAVE  &kp N1    &kp N2    &kp N3     &kp N4  &kp N5            &kp N6       &kp N7     &kp N8     &kp N9    &kp N0    &trans
 &trans     &kp LEFT  &kp DOWN  &kp UP     &kp RIGHT  &trans         &kp LEFT     &kp DOWN   &kp UP     &kp RIGHT    &trans    &trans
                      &trans    &trans     &trans  &trans            &trans       &trans     &trans     &trans
             >;
