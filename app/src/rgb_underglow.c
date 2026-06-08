@@ -41,6 +41,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define SAT_MAX 100
 #define BRT_MAX 100
 #define STATUS_PIXELS_MAX 8
+#define STATUS_CHANNELS_LEN 3
 
 BUILD_ASSERT(CONFIG_ZMK_RGB_UNDERGLOW_BRT_MIN <= CONFIG_ZMK_RGB_UNDERGLOW_BRT_MAX,
              "ERROR: RGB underglow maximum brightness is less than minimum brightness");
@@ -79,7 +80,7 @@ struct rgb_underglow_status_pixel_state {
     struct rgb_underglow_status_pixel pixels[STATUS_PIXELS_MAX];
 };
 
-static struct rgb_underglow_status_pixel_state status_pixel;
+static struct rgb_underglow_status_pixel_state status_channels[STATUS_CHANNELS_LEN];
 
 #if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_EXT_POWER)
 static const struct device *const ext_power = DEVICE_DT_GET(DT_INST(0, zmk_ext_power_generic));
@@ -197,13 +198,30 @@ static void zmk_rgb_underglow_effect_off(void) {
 }
 
 static void zmk_rgb_underglow_effect_status_pixel(void) {
-    for (uint8_t i = 0; i < status_pixel.len; i++) {
-        uint16_t index = status_pixel.pixels[i].index;
+    for (uint8_t channel = 0; channel < STATUS_CHANNELS_LEN; channel++) {
+        if (!status_channels[channel].active) {
+            continue;
+        }
 
-        pixels[index] = status_pixel.pixels[i].on
-                            ? hsb_to_rgb(hsb_scale_min_max(status_pixel.pixels[i].color))
-                            : (struct led_rgb){r : 0, g : 0, b : 0};
+        for (uint8_t i = 0; i < status_channels[channel].len; i++) {
+            uint16_t index = status_channels[channel].pixels[i].index;
+
+            pixels[index] =
+                status_channels[channel].pixels[i].on
+                    ? hsb_to_rgb(hsb_scale_min_max(status_channels[channel].pixels[i].color))
+                    : (struct led_rgb){r : 0, g : 0, b : 0};
+        }
     }
+}
+
+static bool zmk_rgb_underglow_status_active(void) {
+    for (uint8_t channel = 0; channel < STATUS_CHANNELS_LEN; channel++) {
+        if (status_channels[channel].active) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 static void zmk_rgb_underglow_render_effect(void) {
@@ -230,7 +248,7 @@ static void zmk_rgb_underglow_tick(struct k_work *work) {
         zmk_rgb_underglow_effect_off();
     }
 
-    if (status_pixel.active) {
+    if (zmk_rgb_underglow_status_active()) {
         zmk_rgb_underglow_effect_status_pixel();
     }
 
@@ -243,7 +261,7 @@ static void zmk_rgb_underglow_tick(struct k_work *work) {
 K_WORK_DEFINE(underglow_tick_work, zmk_rgb_underglow_tick);
 
 static void zmk_rgb_underglow_tick_handler(struct k_timer *timer) {
-    if (!state.on && !status_pixel.active) {
+    if (!state.on && !zmk_rgb_underglow_status_active()) {
         return;
     }
 
@@ -316,7 +334,7 @@ static int zmk_rgb_underglow_init(void) {
     state.on = zmk_usb_is_powered();
 #endif
 
-    if (state.on || status_pixel.active) {
+    if (state.on || zmk_rgb_underglow_status_active()) {
         k_timer_start(&underglow_tick, K_NO_WAIT, K_MSEC(50));
     }
 
@@ -354,7 +372,7 @@ int zmk_rgb_underglow_on(void) {
 #endif
 
     state.on = true;
-    if (!status_pixel.active) {
+    if (!zmk_rgb_underglow_status_active()) {
         state.animation_step = 0;
     }
     k_timer_start(&underglow_tick, K_NO_WAIT, K_MSEC(50));
@@ -374,19 +392,19 @@ int zmk_rgb_underglow_off(void) {
     if (!led_strip)
         return -ENODEV;
 
-#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_EXT_POWER)
-    if (ext_power != NULL) {
-        int rc = ext_power_disable(ext_power);
-        if (rc != 0) {
-            LOG_ERR("Unable to disable EXT_POWER: %d", rc);
-        }
-    }
-#endif
-
     state.on = false;
-    if (!status_pixel.active) {
+    if (!zmk_rgb_underglow_status_active()) {
         k_work_submit_to_queue(zmk_workqueue_lowprio_work_q(), &underglow_off_work);
         k_timer_stop(&underglow_tick);
+
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_EXT_POWER)
+        if (ext_power != NULL) {
+            int rc = ext_power_disable(ext_power);
+            if (rc != 0) {
+                LOG_ERR("Unable to disable EXT_POWER: %d", rc);
+            }
+        }
+#endif
     }
 
     return zmk_rgb_underglow_save_state();
@@ -434,8 +452,18 @@ int zmk_rgb_underglow_status_pixel(uint16_t index, struct zmk_led_hsb color) {
 
 int zmk_rgb_underglow_status_pixels(const uint16_t *indices, const struct zmk_led_hsb *colors,
                                     uint8_t len) {
+    return zmk_rgb_underglow_status_channel_pixels(ZMK_RGB_UNDERGLOW_STATUS_CHANNEL_DEFAULT, indices,
+                                                  colors, len);
+}
+
+int zmk_rgb_underglow_status_channel_pixels(uint8_t channel, const uint16_t *indices,
+                                            const struct zmk_led_hsb *colors, uint8_t len) {
     if (!led_strip)
         return -ENODEV;
+
+    if (channel >= STATUS_CHANNELS_LEN) {
+        return -EINVAL;
+    }
 
     if (indices == NULL || colors == NULL || len == 0 || len > STATUS_PIXELS_MAX) {
         return -EINVAL;
@@ -457,11 +485,11 @@ int zmk_rgb_underglow_status_pixels(const uint16_t *indices, const struct zmk_le
     }
 #endif
 
-    status_pixel.active = true;
-    status_pixel.len = len;
+    status_channels[channel].active = true;
+    status_channels[channel].len = len;
 
     for (uint8_t i = 0; i < len; i++) {
-        status_pixel.pixels[i] = (struct rgb_underglow_status_pixel){
+        status_channels[channel].pixels[i] = (struct rgb_underglow_status_pixel){
             on : colors[i].b > 0,
             index : indices[i],
             color : colors[i],
@@ -474,19 +502,27 @@ int zmk_rgb_underglow_status_pixels(const uint16_t *indices, const struct zmk_le
 }
 
 int zmk_rgb_underglow_clear_status_pixel(void) {
+    return zmk_rgb_underglow_clear_status_channel(ZMK_RGB_UNDERGLOW_STATUS_CHANNEL_DEFAULT);
+}
+
+int zmk_rgb_underglow_clear_status_channel(uint8_t channel) {
     if (!led_strip)
         return -ENODEV;
 
-    if (!status_pixel.active) {
+    if (channel >= STATUS_CHANNELS_LEN) {
+        return -EINVAL;
+    }
+
+    if (!status_channels[channel].active) {
         return 0;
     }
 
-    status_pixel.active = false;
-    status_pixel.len = 0;
+    status_channels[channel].active = false;
+    status_channels[channel].len = 0;
 
     if (state.on) {
         k_timer_start(&underglow_tick, K_NO_WAIT, K_MSEC(50));
-    } else {
+    } else if (!zmk_rgb_underglow_status_active()) {
         k_timer_stop(&underglow_tick);
         k_work_submit_to_queue(zmk_workqueue_lowprio_work_q(), &underglow_off_work);
 
