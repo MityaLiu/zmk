@@ -40,6 +40,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define HUE_MAX 360
 #define SAT_MAX 100
 #define BRT_MAX 100
+#define STATUS_PIXELS_MAX 8
 
 BUILD_ASSERT(CONFIG_ZMK_RGB_UNDERGLOW_BRT_MIN <= CONFIG_ZMK_RGB_UNDERGLOW_BRT_MAX,
              "ERROR: RGB underglow maximum brightness is less than minimum brightness");
@@ -65,6 +66,20 @@ static const struct device *led_strip;
 static struct led_rgb pixels[STRIP_NUM_PIXELS];
 
 static struct rgb_underglow_state state;
+
+struct rgb_underglow_status_pixel {
+    bool on;
+    uint16_t index;
+    struct zmk_led_hsb color;
+};
+
+struct rgb_underglow_status_pixel_state {
+    bool active;
+    uint8_t len;
+    struct rgb_underglow_status_pixel pixels[STATUS_PIXELS_MAX];
+};
+
+static struct rgb_underglow_status_pixel_state status_pixel;
 
 #if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_EXT_POWER)
 static const struct device *const ext_power = DEVICE_DT_GET(DT_INST(0, zmk_ext_power_generic));
@@ -175,7 +190,23 @@ static void zmk_rgb_underglow_effect_swirl(void) {
     state.animation_step = state.animation_step % HUE_MAX;
 }
 
-static void zmk_rgb_underglow_tick(struct k_work *work) {
+static void zmk_rgb_underglow_effect_off(void) {
+    for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
+        pixels[i] = (struct led_rgb){r : 0, g : 0, b : 0};
+    }
+}
+
+static void zmk_rgb_underglow_effect_status_pixel(void) {
+    for (uint8_t i = 0; i < status_pixel.len; i++) {
+        uint16_t index = status_pixel.pixels[i].index;
+
+        pixels[index] = status_pixel.pixels[i].on
+                            ? hsb_to_rgb(hsb_scale_min_max(status_pixel.pixels[i].color))
+                            : (struct led_rgb){r : 0, g : 0, b : 0};
+    }
+}
+
+static void zmk_rgb_underglow_render_effect(void) {
     switch (state.current_effect) {
     case UNDERGLOW_EFFECT_SOLID:
         zmk_rgb_underglow_effect_solid();
@@ -190,6 +221,18 @@ static void zmk_rgb_underglow_tick(struct k_work *work) {
         zmk_rgb_underglow_effect_swirl();
         break;
     }
+}
+
+static void zmk_rgb_underglow_tick(struct k_work *work) {
+    if (state.on) {
+        zmk_rgb_underglow_render_effect();
+    } else {
+        zmk_rgb_underglow_effect_off();
+    }
+
+    if (status_pixel.active) {
+        zmk_rgb_underglow_effect_status_pixel();
+    }
 
     int err = led_strip_update_rgb(led_strip, pixels, STRIP_NUM_PIXELS);
     if (err < 0) {
@@ -200,7 +243,7 @@ static void zmk_rgb_underglow_tick(struct k_work *work) {
 K_WORK_DEFINE(underglow_tick_work, zmk_rgb_underglow_tick);
 
 static void zmk_rgb_underglow_tick_handler(struct k_timer *timer) {
-    if (!state.on) {
+    if (!state.on && !status_pixel.active) {
         return;
     }
 
@@ -273,7 +316,7 @@ static int zmk_rgb_underglow_init(void) {
     state.on = zmk_usb_is_powered();
 #endif
 
-    if (state.on) {
+    if (state.on || status_pixel.active) {
         k_timer_start(&underglow_tick, K_NO_WAIT, K_MSEC(50));
     }
 
@@ -311,16 +354,16 @@ int zmk_rgb_underglow_on(void) {
 #endif
 
     state.on = true;
-    state.animation_step = 0;
+    if (!status_pixel.active) {
+        state.animation_step = 0;
+    }
     k_timer_start(&underglow_tick, K_NO_WAIT, K_MSEC(50));
 
     return zmk_rgb_underglow_save_state();
 }
 
 static void zmk_rgb_underglow_off_handler(struct k_work *work) {
-    for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
-        pixels[i] = (struct led_rgb){r : 0, g : 0, b : 0};
-    }
+    zmk_rgb_underglow_effect_off();
 
     led_strip_update_rgb(led_strip, pixels, STRIP_NUM_PIXELS);
 }
@@ -340,10 +383,11 @@ int zmk_rgb_underglow_off(void) {
     }
 #endif
 
-    k_work_submit_to_queue(zmk_workqueue_lowprio_work_q(), &underglow_off_work);
-
-    k_timer_stop(&underglow_tick);
     state.on = false;
+    if (!status_pixel.active) {
+        k_work_submit_to_queue(zmk_workqueue_lowprio_work_q(), &underglow_off_work);
+        k_timer_stop(&underglow_tick);
+    }
 
     return zmk_rgb_underglow_save_state();
 }
@@ -380,6 +424,81 @@ int zmk_rgb_underglow_set_hsb(struct zmk_led_hsb color) {
     }
 
     state.color = color;
+
+    return 0;
+}
+
+int zmk_rgb_underglow_status_pixel(uint16_t index, struct zmk_led_hsb color) {
+    return zmk_rgb_underglow_status_pixels(&index, &color, 1);
+}
+
+int zmk_rgb_underglow_status_pixels(const uint16_t *indices, const struct zmk_led_hsb *colors,
+                                    uint8_t len) {
+    if (!led_strip)
+        return -ENODEV;
+
+    if (indices == NULL || colors == NULL || len == 0 || len > STATUS_PIXELS_MAX) {
+        return -EINVAL;
+    }
+
+    for (uint8_t i = 0; i < len; i++) {
+        if (indices[i] >= STRIP_NUM_PIXELS || colors[i].h > HUE_MAX || colors[i].s > SAT_MAX ||
+            colors[i].b > BRT_MAX) {
+            return -EINVAL;
+        }
+    }
+
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_EXT_POWER)
+    if (ext_power != NULL) {
+        int rc = ext_power_enable(ext_power);
+        if (rc != 0) {
+            LOG_ERR("Unable to enable EXT_POWER: %d", rc);
+        }
+    }
+#endif
+
+    status_pixel.active = true;
+    status_pixel.len = len;
+
+    for (uint8_t i = 0; i < len; i++) {
+        status_pixel.pixels[i] = (struct rgb_underglow_status_pixel){
+            on : colors[i].b > 0,
+            index : indices[i],
+            color : colors[i],
+        };
+    }
+
+    k_timer_start(&underglow_tick, K_NO_WAIT, K_MSEC(50));
+
+    return 0;
+}
+
+int zmk_rgb_underglow_clear_status_pixel(void) {
+    if (!led_strip)
+        return -ENODEV;
+
+    if (!status_pixel.active) {
+        return 0;
+    }
+
+    status_pixel.active = false;
+    status_pixel.len = 0;
+
+    if (state.on) {
+        k_timer_start(&underglow_tick, K_NO_WAIT, K_MSEC(50));
+    } else {
+        k_timer_stop(&underglow_tick);
+        k_work_submit_to_queue(zmk_workqueue_lowprio_work_q(), &underglow_off_work);
+
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_EXT_POWER)
+        if (ext_power != NULL) {
+            int rc = ext_power_disable(ext_power);
+            if (rc != 0) {
+                LOG_ERR("Unable to disable EXT_POWER: %d", rc);
+            }
+        }
+#endif
+    }
 
     return 0;
 }
