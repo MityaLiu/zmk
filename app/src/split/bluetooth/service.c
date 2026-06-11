@@ -55,6 +55,7 @@ static uint8_t num_of_positions = ZMK_KEYMAP_LEN;
 static uint8_t position_state[POS_STATE_LEN];
 
 static struct zmk_split_run_behavior_payload behavior_run_payload;
+static struct zmk_split_rgb_underglow_payload rgb_underglow_payload;
 
 static ssize_t split_svc_pos_state(struct bt_conn *conn, const struct bt_gatt_attr *attrs,
                                    void *buf, uint16_t len, uint16_t offset) {
@@ -65,6 +66,9 @@ static ssize_t split_svc_pos_state(struct bt_conn *conn, const struct bt_gatt_at
 static ssize_t split_svc_run_behavior(struct bt_conn *conn, const struct bt_gatt_attr *attrs,
                                       const void *buf, uint16_t len, uint16_t offset,
                                       uint8_t flags);
+static ssize_t split_svc_rgb_underglow(struct bt_conn *conn, const struct bt_gatt_attr *attrs,
+                                       const void *buf, uint16_t len, uint16_t offset,
+                                       uint8_t flags);
 
 static ssize_t split_svc_num_of_positions(struct bt_conn *conn, const struct bt_gatt_attr *attrs,
                                           void *buf, uint16_t len, uint16_t offset) {
@@ -204,8 +208,10 @@ BT_GATT_SERVICE_DEFINE(
     BT_GATT_CHARACTERISTIC(BT_UUID_DECLARE_128(ZMK_SPLIT_BT_SELECT_PHYS_LAYOUT_UUID),
                            BT_GATT_CHRC_WRITE | BT_GATT_CHRC_READ,
                            BT_GATT_PERM_WRITE_ENCRYPT | BT_GATT_PERM_READ_ENCRYPT,
-                           split_svc_get_selected_phys_layout, split_svc_select_phys_layout,
-                           NULL), );
+                           split_svc_get_selected_phys_layout, split_svc_select_phys_layout, NULL),
+    BT_GATT_CHARACTERISTIC(BT_UUID_DECLARE_128(ZMK_SPLIT_BT_RGB_UNDERGLOW_UUID),
+                           BT_GATT_CHRC_WRITE_WITHOUT_RESP, BT_GATT_PERM_WRITE_ENCRYPT, NULL,
+                           split_svc_rgb_underglow, &rgb_underglow_payload), );
 
 K_THREAD_STACK_DEFINE(service_q_stack, CONFIG_ZMK_SPLIT_BLE_PERIPHERAL_STACK_SIZE);
 
@@ -430,6 +436,38 @@ static ssize_t split_svc_run_behavior(struct bt_conn *conn, const struct bt_gatt
 
         if (err) {
             LOG_ERR("Failed to invoke behavior %s: %d", payload->behavior_dev, err);
+        }
+    }
+
+    return len;
+}
+
+static ssize_t split_svc_rgb_underglow(struct bt_conn *conn, const struct bt_gatt_attr *attrs,
+                                       const void *buf, uint16_t len, uint16_t offset,
+                                       uint8_t flags) {
+    struct zmk_split_rgb_underglow_payload *payload = attrs->user_data;
+    uint16_t end_addr = offset + len;
+
+    if (end_addr > sizeof(struct zmk_split_rgb_underglow_payload)) {
+        return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
+    }
+
+    memcpy((uint8_t *)payload + offset, buf, len);
+
+    if (end_addr == sizeof(struct zmk_split_rgb_underglow_payload)) {
+        struct zmk_split_transport_central_command cmd = {
+            .type = ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_SET_RGB_UNDERGLOW,
+            .data = {.set_rgb_underglow = {
+                         .led_index = payload->led_index,
+                         .clear = payload->clear,
+                         .color = payload->color,
+                     }}};
+
+        int err = zmk_split_transport_peripheral_command_handler(
+            zmk_split_transport_peripheral_bt(), cmd);
+
+        if (err) {
+            LOG_ERR("Failed to set RGB underglow from split central: %d", err);
         }
     }
 

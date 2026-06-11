@@ -12,6 +12,10 @@
 #include <zmk/hid_indicators_types.h>
 #include <zmk/pointing/input_split.h>
 
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_PER_KEY)
+#include <zmk/rgb_underglow.h>
+#endif
+
 #include <zephyr/logging/log.h>
 
 #include <zmk/event_manager.h>
@@ -110,6 +114,79 @@ int zmk_split_central_invoke_behavior(uint8_t source, struct zmk_behavior_bindin
     return active_transport->api->send_command(source, command);
 };
 
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_PER_KEY)
+
+static void sync_rgb_underglow_per_key_peripherals(void) {
+    int err = zmk_rgb_underglow_per_key_sync_peripherals();
+    if (err < 0) {
+        LOG_WRN("Failed to sync RGB underglow state to split peripherals (%d)", err);
+    }
+}
+
+int zmk_split_central_set_rgb_underglow(uint8_t source, uint16_t led_index,
+                                        struct zmk_rgb_color color) {
+    if (source >= ZMK_SPLIT_CENTRAL_PERIPHERAL_COUNT) {
+        return -EINVAL;
+    }
+
+    if (!active_transport || !active_transport->api || !active_transport->api->send_command) {
+        return 0;
+    }
+
+    struct zmk_split_transport_central_command command =
+        (struct zmk_split_transport_central_command){
+            .type = ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_SET_RGB_UNDERGLOW,
+            .data =
+                {
+                    .set_rgb_underglow =
+                        {
+                            .led_index = led_index,
+                            .clear = 0,
+                            .color = color,
+                        },
+                },
+        };
+
+    return active_transport->api->send_command(source, command);
+}
+
+int zmk_split_central_clear_rgb_underglow(void) {
+    if (!active_transport || !active_transport->api ||
+        !active_transport->api->get_available_source_ids || !active_transport->api->send_command) {
+        return 0;
+    }
+
+    uint8_t source_ids[ZMK_SPLIT_CENTRAL_PERIPHERAL_COUNT];
+
+    int ret = active_transport->api->get_available_source_ids(source_ids);
+    if (ret < 0) {
+        return 0;
+    }
+
+    struct zmk_split_transport_central_command command =
+        (struct zmk_split_transport_central_command){
+            .type = ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_SET_RGB_UNDERGLOW,
+            .data =
+                {
+                    .set_rgb_underglow =
+                        {
+                            .clear = 1,
+                        },
+                },
+        };
+
+    for (size_t i = 0; i < ret; i++) {
+        ret = active_transport->api->send_command(source_ids[i], command);
+        if (ret < 0) {
+            return ret;
+        }
+    }
+
+    return 0;
+}
+
+#endif // IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_PER_KEY)
+
 #if IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_HID_INDICATORS)
 
 int zmk_split_central_update_hid_indicator(zmk_hid_indicators_t indicators) {
@@ -189,6 +266,12 @@ static int select_first_available_transport(void) {
                 err = active_transport->api->set_enabled(true);
             }
 
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_PER_KEY)
+            if (err == 0) {
+                sync_rgb_underglow_per_key_peripherals();
+            }
+#endif
+
             return err;
         }
     }
@@ -204,6 +287,9 @@ static int transport_status_changed_cb(const struct zmk_split_transport_central 
         if (status.connections == ZMK_SPLIT_TRANSPORT_CONNECTIONS_STATUS_DISCONNECTED) {
             return select_first_available_transport();
         }
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_PER_KEY)
+        sync_rgb_underglow_per_key_peripherals();
+#endif
     } else {
         // Just to be sure, in case a higher priority transport becomes available
         select_first_available_transport();

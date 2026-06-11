@@ -33,6 +33,9 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/pointing/input_split.h>
 #include <zmk/hid_indicators_types.h>
 #include <zmk/physical_layouts.h>
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_PER_KEY)
+#include <zmk/rgb_underglow.h>
+#endif
 
 static int start_scanning(void);
 
@@ -60,6 +63,7 @@ struct peripheral_slot {
     uint16_t update_hid_indicators;
 #endif // IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_HID_INDICATORS)
     uint16_t selected_physical_layout_handle;
+    uint16_t rgb_underglow_handle;
     uint8_t position_state[POSITION_STATE_DATA_LEN];
     uint8_t changed_positions[POSITION_STATE_DATA_LEN];
 };
@@ -216,6 +220,7 @@ int release_peripheral_slot(int index) {
     slot->subscribe_params.value_handle = 0;
     slot->run_behavior_handle = 0;
     slot->selected_physical_layout_handle = 0;
+    slot->rgb_underglow_handle = 0;
 #if IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_HID_INDICATORS)
     slot->update_hid_indicators = 0;
 #endif // IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_HID_INDICATORS)
@@ -535,6 +540,17 @@ static void update_peripherals_selected_physical_layout(struct k_work *_work) {
 K_WORK_DEFINE(update_peripherals_selected_layouts_work,
               update_peripherals_selected_physical_layout);
 
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_PER_KEY)
+
+static void sync_rgb_underglow_per_key_peripherals(void) {
+    int err = zmk_rgb_underglow_per_key_sync_peripherals();
+    if (err < 0) {
+        LOG_WRN("Failed to sync RGB underglow state to BLE peripherals (%d)", err);
+    }
+}
+
+#endif // IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_PER_KEY)
+
 static uint8_t split_central_chrc_discovery_func(struct bt_conn *conn,
                                                  const struct bt_gatt_attr *attr,
                                                  struct bt_gatt_discover_params *params) {
@@ -614,6 +630,13 @@ static uint8_t split_central_chrc_discovery_func(struct bt_conn *conn,
             LOG_DBG("Found select physical layout handle");
             slot->selected_physical_layout_handle = bt_gatt_attr_value_handle(attr);
             k_work_submit(&update_peripherals_selected_layouts_work);
+        } else if (!bt_uuid_cmp(((struct bt_gatt_chrc *)attr->user_data)->uuid,
+                                BT_UUID_DECLARE_128(ZMK_SPLIT_BT_RGB_UNDERGLOW_UUID))) {
+            LOG_DBG("Found RGB underglow handle");
+            slot->rgb_underglow_handle = bt_gatt_attr_value_handle(attr);
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_PER_KEY)
+            sync_rgb_underglow_per_key_peripherals();
+#endif
 #if IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_HID_INDICATORS)
         } else if (!bt_uuid_cmp(((struct bt_gatt_chrc *)attr->user_data)->uuid,
                                 BT_UUID_DECLARE_128(ZMK_SPLIT_BT_UPDATE_HID_INDICATORS_UUID))) {
@@ -687,6 +710,10 @@ static uint8_t split_central_chrc_discovery_func(struct bt_conn *conn,
 
     bool subscribed = slot->run_behavior_handle && slot->subscribe_params.value_handle &&
                       slot->selected_physical_layout_handle;
+
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_PER_KEY)
+    subscribed = subscribed && slot->rgb_underglow_handle;
+#endif // IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_PER_KEY)
 
 #if ZMK_KEYMAP_HAS_SENSORS
     subscribed = subscribed && slot->sensor_subscribe_params.value_handle;
@@ -1001,6 +1028,9 @@ static void split_central_security_changed(struct bt_conn *conn, bt_security_t l
     }
 
     k_work_submit(&update_peripherals_selected_layouts_work);
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_PER_KEY)
+    sync_rgb_underglow_per_key_peripherals();
+#endif
 }
 
 static struct bt_conn_cb conn_callbacks = {
@@ -1093,6 +1123,32 @@ void split_central_split_run_callback(struct k_work *work) {
             }
             break;
 #endif // IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_HID_INDICATORS)
+        case ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_SET_RGB_UNDERGLOW:
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_PER_KEY)
+            if (peripherals[payload_wrapper.source].rgb_underglow_handle == 0) {
+                LOG_WRN("No RGB underglow handle found for peripheral");
+                break;
+            }
+
+            struct zmk_split_rgb_underglow_payload rgb_payload = {
+                .led_index = payload_wrapper.cmd.data.set_rgb_underglow.led_index,
+                .clear = payload_wrapper.cmd.data.set_rgb_underglow.clear,
+                .color = payload_wrapper.cmd.data.set_rgb_underglow.color,
+            };
+
+            int rgb_err = bt_gatt_write_without_response(
+                peripherals[payload_wrapper.source].conn,
+                peripherals[payload_wrapper.source].rgb_underglow_handle, &rgb_payload,
+                sizeof(struct zmk_split_rgb_underglow_payload), true);
+
+            if (rgb_err) {
+                LOG_ERR("Failed to write RGB underglow characteristic (err %d)", rgb_err);
+            }
+            break;
+#else
+            LOG_WRN("RGB underglow split command is not supported");
+            break;
+#endif // IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_PER_KEY)
         default:
             LOG_WRN("Unsupported wrapped central command type %d", payload_wrapper.cmd.type);
             return;
@@ -1176,6 +1232,7 @@ static int split_central_bt_send_command(uint8_t source,
     switch (cmd.type) {
     case ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_SET_HID_INDICATORS:
     case ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_SET_PHYSICAL_LAYOUT:
+    case ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_SET_RGB_UNDERGLOW:
     case ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_INVOKE_BEHAVIOR: {
         struct central_cmd_wrapper wrapper = {.source = source, .cmd = cmd};
         return split_bt_invoke_behavior_payload(wrapper);

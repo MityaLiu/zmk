@@ -8,6 +8,7 @@
 
 #include <zephyr/bluetooth/addr.h>
 #include <zmk/behavior.h>
+#include <zmk/rgb_underglow.h>
 
 #if IS_ENABLED(CONFIG_ZMK_SPLIT_BLE)
 
@@ -34,6 +35,14 @@
 
 int zmk_split_central_invoke_behavior(uint8_t source, struct zmk_behavior_binding *binding,
                                       struct zmk_behavior_binding_event event, bool state);
+
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_PER_KEY)
+
+int zmk_split_central_set_rgb_underglow(uint8_t source, uint16_t led_index,
+                                        struct zmk_rgb_color color);
+int zmk_split_central_clear_rgb_underglow(void);
+
+#endif // IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_PER_KEY)
 
 #if IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_HID_INDICATORS)
 

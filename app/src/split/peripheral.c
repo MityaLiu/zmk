@@ -12,6 +12,9 @@
 #include <drivers/behavior.h>
 #include <zmk/behavior.h>
 #include <zmk/physical_layouts.h>
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_PER_KEY)
+#include <zmk/rgb_underglow.h>
+#endif
 
 #include <zmk/event_manager.h>
 #include <zmk/events/position_state_changed.h>
@@ -66,6 +69,18 @@ int zmk_split_transport_peripheral_command_handler(
             .indicators = cmd.data.set_hid_indicators.indicators});
     }
 #endif
+    case ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_SET_RGB_UNDERGLOW: {
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_PER_KEY)
+        if (cmd.data.set_rgb_underglow.clear) {
+            return zmk_rgb_underglow_clear_pixel_overrides();
+        }
+
+        return zmk_rgb_underglow_set_pixel_override(cmd.data.set_rgb_underglow.led_index,
+                                                    cmd.data.set_rgb_underglow.color);
+#else
+        return -ENOTSUP;
+#endif
+    }
     default:
         LOG_WRN("Unhandled command type %d", cmd.type);
         return -ENOTSUP;

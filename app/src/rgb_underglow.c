@@ -11,6 +11,7 @@
 
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <zephyr/logging/log.h>
 
@@ -65,6 +66,11 @@ static const struct device *led_strip;
 static struct led_rgb pixels[STRIP_NUM_PIXELS];
 
 static struct rgb_underglow_state state;
+
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_PER_KEY)
+static bool pixel_override_active[STRIP_NUM_PIXELS];
+static struct led_rgb pixel_overrides[STRIP_NUM_PIXELS];
+#endif
 
 #if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_EXT_POWER)
 static const struct device *const ext_power = DEVICE_DT_GET(DT_INST(0, zmk_ext_power_generic));
@@ -175,6 +181,20 @@ static void zmk_rgb_underglow_effect_swirl(void) {
     state.animation_step = state.animation_step % HUE_MAX;
 }
 
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_PER_KEY)
+static struct led_rgb zmk_rgb_color_to_led_rgb(struct zmk_rgb_color color) {
+    return (struct led_rgb){r : color.r, g : color.g, b : color.b};
+}
+
+static void zmk_rgb_underglow_apply_pixel_overrides(void) {
+    for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
+        if (pixel_override_active[i]) {
+            pixels[i] = pixel_overrides[i];
+        }
+    }
+}
+#endif
+
 static void zmk_rgb_underglow_tick(struct k_work *work) {
     switch (state.current_effect) {
     case UNDERGLOW_EFFECT_SOLID:
@@ -190,6 +210,10 @@ static void zmk_rgb_underglow_tick(struct k_work *work) {
         zmk_rgb_underglow_effect_swirl();
         break;
     }
+
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_PER_KEY)
+    zmk_rgb_underglow_apply_pixel_overrides();
+#endif
 
     int err = led_strip_update_rgb(led_strip, pixels, STRIP_NUM_PIXELS);
     if (err < 0) {
@@ -296,6 +320,63 @@ int zmk_rgb_underglow_get_state(bool *on_off) {
     *on_off = state.on;
     return 0;
 }
+
+int zmk_rgb_underglow_get_led_count(uint16_t *count) {
+    if (!led_strip)
+        return -ENODEV;
+
+    *count = STRIP_NUM_PIXELS;
+    return 0;
+}
+
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_PER_KEY)
+static int zmk_rgb_underglow_refresh_if_on(void) {
+    if (state.on) {
+        k_work_submit_to_queue(zmk_workqueue_lowprio_work_q(), &underglow_tick_work);
+    }
+
+    return 0;
+}
+
+int zmk_rgb_underglow_set_pixel_override(uint16_t led_index, struct zmk_rgb_color color) {
+    if (!led_strip) {
+        return -ENODEV;
+    }
+
+    if (led_index >= STRIP_NUM_PIXELS) {
+        return -EINVAL;
+    }
+
+    pixel_overrides[led_index] = zmk_rgb_color_to_led_rgb(color);
+    pixel_override_active[led_index] = true;
+
+    return zmk_rgb_underglow_refresh_if_on();
+}
+
+int zmk_rgb_underglow_clear_pixel_override(uint16_t led_index) {
+    if (!led_strip) {
+        return -ENODEV;
+    }
+
+    if (led_index >= STRIP_NUM_PIXELS) {
+        return -EINVAL;
+    }
+
+    pixel_override_active[led_index] = false;
+
+    return zmk_rgb_underglow_refresh_if_on();
+}
+
+int zmk_rgb_underglow_clear_pixel_overrides(void) {
+    if (!led_strip) {
+        return -ENODEV;
+    }
+
+    memset(pixel_override_active, 0, sizeof(pixel_override_active));
+
+    return zmk_rgb_underglow_refresh_if_on();
+}
+#endif
 
 int zmk_rgb_underglow_on(void) {
     if (!led_strip)

@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <zmk/rgb_underglow.h>
 #include <zmk/events/sensor_event.h>
 #include <zmk/sensors.h>
 
@@ -36,4 +37,10 @@ struct zmk_split_input_event_payload {
     uint16_t code;
     uint32_t value;
     uint8_t sync;
+} __packed;
+
+struct zmk_split_rgb_underglow_payload {
+    uint16_t led_index;
+    uint8_t clear;
+    struct zmk_rgb_color color;
 } __packed;

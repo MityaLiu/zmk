@@ -7,6 +7,7 @@
 #pragma once
 
 #include <zmk/hid_indicators_types.h>
+#include <zmk/rgb_underglow.h>
 #include <zmk/sensors.h>
 #include <zephyr/sys/util.h>
 
@@ -66,6 +67,7 @@ enum zmk_split_transport_central_command_type {
     ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_INVOKE_BEHAVIOR,
     ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_SET_PHYSICAL_LAYOUT,
     ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_SET_HID_INDICATORS,
+    ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_SET_RGB_UNDERGLOW,
 } __packed;
 
 struct zmk_split_transport_central_command {
@@ -87,5 +89,11 @@ struct zmk_split_transport_central_command {
         struct {
             zmk_hid_indicators_t indicators;
         } set_hid_indicators;
+
+        struct {
+            uint16_t led_index;
+            uint8_t clear;
+            struct zmk_rgb_color color;
+        } set_rgb_underglow;
     } data;
 } __packed;
